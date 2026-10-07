@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Scroll Reader</string>
+    <string name="tile_label">Read screen</string>
+    <string name="service_description">Reads the app on your screen aloud and keeps scrolling down until it reaches the end. It skips the status bar (time, battery, signal). Start or stop it with the floating button or the "Read screen" Quick Settings tile.</string>
+</resources>
