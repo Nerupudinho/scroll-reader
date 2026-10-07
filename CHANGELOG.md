@@ -3,6 +3,11 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.1.1 (2026-10-08)
+
+### Changed
+- New app icon: text lines with a sound wave, on a dark navy background.
+
 ## v1.1.0 (2026-10-07)
 
 ### Added
