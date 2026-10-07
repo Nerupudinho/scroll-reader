@@ -6,9 +6,7 @@ import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.graphics.Path
-import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -16,25 +14,22 @@ import android.service.quicksettings.TileService
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewConfiguration
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import android.widget.ImageView
 import android.widget.Toast
-import kotlin.math.abs
 
 /**
- * Reads the app currently on screen, then scrolls down and reads what's new,
- * over and over until the page stops changing.
+ * Reads the app on screen block by block, scrolling down for more when it
+ * runs out, until the page stops changing.
  *
- * Loop:  collect text -> speak the new lines -> (speech done) -> scroll -> wait -> repeat
+ * Everything read so far sits in one queue, so the controls can move through it:
+ *   Pause/Resume  - resumes at the word where it stopped
+ *   Back          - restart this block, or (if near its start) go to the previous block
+ *   Skip          - next block (scrolls for more when needed)
+ *   − / +         - speed, applied immediately from the current word
  */
-class ReaderService : AccessibilityService() {
+class ReaderService : AccessibilityService(), FloatingControls.Listener {
 
     companion object {
         private const val TAG = "ScrollReader"
@@ -42,6 +37,8 @@ class ReaderService : AccessibilityService() {
         private const val SETTLE_MS = 900L          // let the list finish moving before reading
         private const val SHADE_CLOSE_MS = 700L     // time for the notification shade to close
         private const val STALE_LIMIT = 2           // scrolls with nothing new => end of page
+        private const val RATE_STEP = 0.25f
+        private const val BACK_RESTART_CHARS = 20   // past this far into a block, Back restarts it
 
         @Volatile
         var instance: ReaderService? = null
@@ -61,8 +58,8 @@ class ReaderService : AccessibilityService() {
     private val main = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var controls: FloatingControls? = null
 
-    private var bubble: ImageView? = null
     private var session: Session? = null
     private var sessionCounter = 0
 
@@ -70,11 +67,20 @@ class ReaderService : AccessibilityService() {
 
     /** State for one read-through of one app. */
     private class Session(val id: Int, val packageName: String?) {
-        var screens = 0
+        val queue = ArrayList<Line>()
+        var pos = 0                 // block being read
+        var offset = 0              // character in that block to resume from
+        var speakBase = 0           // offset the current utterance started at
+        var speakingId: String? = null
+        var utterances = 0
+
+        var batch = 0               // screens loaded so far (0 = first screen)
         var staleRounds = 0
-        var previousScreen: List<String> = emptyList()
+        var previousTexts: Set<String> = emptySet()
         var seen: Set<String> = emptySet()   // text from the last two screens
-        var lastUtteranceId: String? = null
+
+        var paused = false
+        var loading = false
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -86,17 +92,18 @@ class ReaderService : AccessibilityService() {
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {
                 tts?.setOnUtteranceProgressListener(utteranceListener)
+                tts?.setSpeechRate(Prefs.speechRate(this))
             } else {
                 Log.w(TAG, "Text-to-speech failed to start: $status")
             }
         }
-        if (Prefs.showBubble(this)) showBubble()
+        controls = FloatingControls(this, this).also {
+            if (Prefs.showBubble(this)) it.show()
+        }
         refreshTile(this)
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Nothing to do on events; reading is started by the bubble or the tile.
-    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {
         stopReading(announce = false)
@@ -104,7 +111,8 @@ class ReaderService : AccessibilityService() {
 
     override fun onDestroy() {
         stopReading(announce = false)
-        hideBubble()
+        controls?.destroy()
+        controls = null
         tts?.shutdown()
         tts = null
         instance = null
@@ -112,11 +120,7 @@ class ReaderService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // ---------------------------------------------------------------- public controls
-
-    fun toggle() {
-        if (isReading) stopReading(announce = true) else startReading()
-    }
+    // ---------------------------------------------------------------- outside controls
 
     /** From the Quick Settings tile: close the shade first so the app under it gets read. */
     fun toggleFromTile() {
@@ -129,31 +133,11 @@ class ReaderService : AccessibilityService() {
         } else {
             performGlobalAction(GLOBAL_ACTION_BACK)
         }
-        main.postDelayed({ startReading() }, SHADE_CLOSE_MS)
+        main.postDelayed({ startReading(fromY = null) }, SHADE_CLOSE_MS)
     }
 
     fun setBubbleVisible(visible: Boolean) {
-        if (visible) showBubble() else hideBubble()
-    }
-
-    // ---------------------------------------------------------------- reading loop
-
-    private fun startReading() {
-        if (isReading) return
-        val engine = tts
-        if (engine == null || !ttsReady) {
-            toast("Voice engine isn't ready yet. Try again in a moment.")
-            return
-        }
-        val root = findAppRoot()
-        if (root == null) {
-            toast("Couldn't find an app on screen to read.")
-            return
-        }
-        engine.setSpeechRate(Prefs.speechRate(this))
-        session = Session(++sessionCounter, root.packageName?.toString())
-        updateUi()
-        readScreen()
+        if (visible) controls?.show() else controls?.hide()
     }
 
     fun stopReading(announce: Boolean) {
@@ -161,68 +145,179 @@ class ReaderService : AccessibilityService() {
         endSession(if (announce) "Stopped" else null)
     }
 
-    private fun endSession(message: String?) {
-        session = null
-        main.removeCallbacksAndMessages(null)
-        tts?.stop()
-        if (message != null) {
-            tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "notice")
+    // ---------------------------------------------------------------- FloatingControls.Listener
+
+    override fun onPlayTap() = startReading(fromY = null)
+
+    override fun onPlayLongPress() {
+        if (!checkReady()) return
+        controls?.startPicking()
+    }
+
+    override fun onPickedPoint(y: Int) {
+        controls?.stopPicking()
+        // Give the system a moment to remove the layer before reading the app.
+        main.postDelayed({ startReading(fromY = y) }, 200)
+    }
+
+    override fun onPickCancelled() {
+        controls?.stopPicking()
+    }
+
+    override fun onPauseResume() {
+        val s = session ?: return
+        s.paused = !s.paused
+        if (s.paused) {
+            silence(s)
+        } else {
+            speakCurrent(s)
         }
         updateUi()
     }
 
-    private fun readScreen() {
+    override fun onSkip() {
         val s = session ?: return
-        val root = findAppRoot()
-        if (root == null) {
-            endSession("Lost the screen. Stopped.")
-            return
-        }
-        val pkg = root.packageName?.toString()
-        if (s.packageName != null && pkg != s.packageName) {
-            endSession("App changed. Stopped.")
-            return
-        }
-
-        val items = TextCollector.collect(root, statusBarHeight())
-        // Skip anything already read on the last two screens: this removes the
-        // overlap between scrolls and fixed headers/tab bars that never move.
-        val fresh = items.filter { it !in s.seen }
-        s.seen = s.previousScreen.toSet() + items
-        s.previousScreen = items
-
-        if (fresh.isEmpty()) {
-            s.staleRounds++
-            if (s.staleRounds >= STALE_LIMIT) {
-                endSession("End of page")
-            } else {
-                scrollThenRead(s)
-            }
-            return
-        }
-
-        s.staleRounds = 0
-        s.screens++
-        speak(s, fresh)
+        silence(s)
+        s.pos = (s.pos + 1).coerceAtMost(s.queue.size)
+        s.offset = 0
+        moveTo(s)
     }
 
-    private fun speak(s: Session, lines: List<String>) {
-        val engine = tts
-        if (engine == null) {
-            endSession(null)
+    override fun onBack() {
+        val s = session ?: return
+        silence(s)
+        if (s.offset > BACK_RESTART_CHARS) {
+            s.offset = 0                                   // restart this block
+        } else {
+            s.pos = (s.pos - 1).coerceAtLeast(0)           // previous block
+            s.offset = 0
+        }
+        if (s.pos >= s.queue.size) s.pos = (s.queue.size - 1).coerceAtLeast(0)
+        moveTo(s)
+    }
+
+    override fun onSlower() = changeRate(-RATE_STEP)
+    override fun onFaster() = changeRate(+RATE_STEP)
+
+    override fun onStop() {
+        stopReading(announce = true)
+    }
+
+    // ---------------------------------------------------------------- reading
+
+    private fun checkReady(): Boolean {
+        if (tts == null || !ttsReady) {
+            toast("Voice engine isn't ready yet. Try again in a moment.")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Start reading the app on screen.
+     * [fromY] = screen position the user tapped; blocks above it are skipped.
+     * null = start from the top of what's visible now (never scrolls up).
+     */
+    private fun startReading(fromY: Int?) {
+        if (isReading || !checkReady()) return
+        val root = findAppRoot()
+        if (root == null) {
+            toast("Couldn't find an app on screen to read.")
             return
         }
-        val max = TextToSpeech.getMaxSpeechInputLength() - 1
-        val chunks = lines.flatMap { it.chunked(max) }
-        chunks.forEachIndexed { i, chunk ->
-            val id = "${s.id}:${s.screens}:$i"
-            if (i == chunks.lastIndex) s.lastUtteranceId = id
-            engine.speak(chunk, TextToSpeech.QUEUE_ADD, null, id)
+        tts?.setSpeechRate(Prefs.speechRate(this))
+        val s = Session(++sessionCounter, root.packageName?.toString())
+        session = s
+
+        val lines = collectScreen(s, root)
+        val start = if (fromY == null) {
+            lines
+        } else {
+            // First block whose bottom is below the tap: the one tapped, or the next one down.
+            lines.filter { it.bounds.bottom > fromY }
         }
+        s.queue.addAll(start)
+        updateUi()
+        speakCurrent(s)
+    }
+
+    /** Text on the current screen that wasn't on the previous two screens. */
+    private fun collectScreen(s: Session, root: AccessibilityNodeInfo): List<Line> {
+        val items = TextCollector.collect(root, statusBarHeight(), s.batch)
+        val texts = items.map { it.text }
+        val fresh = items.filter { it.text !in s.seen }
+        s.seen = s.previousTexts + texts
+        s.previousTexts = texts.toSet()
+        return fresh
+    }
+
+    private fun speakCurrent(s: Session) {
+        if (session !== s || s.paused || s.loading) return
+        if (s.pos >= s.queue.size) {
+            loadMore(s) { speakCurrent(s) }
+            return
+        }
+        val line = s.queue[s.pos]
+        highlight(s)
+        if (s.offset >= line.text.length) s.offset = 0
+        val max = TextToSpeech.getMaxSpeechInputLength() - 1
+        val text = line.text.substring(s.offset).take(max)
+        val id = "${s.id}:${++s.utterances}"
+        s.speakingId = id
+        s.speakBase = s.offset
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+    }
+
+    /** After Back/Skip: read from the new spot, or just move the highlight if paused. */
+    private fun moveTo(s: Session) {
+        if (!s.paused) {
+            speakCurrent(s)
+            return
+        }
+        if (s.pos < s.queue.size) {
+            highlight(s)
+        } else if (!s.loading) {
+            loadMore(s) { highlight(s) }
+        }
+    }
+
+    /** Stop the voice but keep our place (s.offset holds the current word). */
+    private fun silence(s: Session) {
+        s.speakingId = null
+        tts?.stop()
+    }
+
+    private fun changeRate(delta: Float) {
+        val rate = (Prefs.speechRate(this) + delta)
+            .coerceIn(Prefs.MIN_RATE, Prefs.MAX_RATE)
+        Prefs.setSpeechRate(this, rate)
+        tts?.setSpeechRate(rate)
+        val s = session ?: return
+        // Re-start from the current word so the new speed applies right away.
+        if (s.speakingId != null && !s.paused) {
+            silence(s)
+            speakCurrent(s)
+        }
+        updateUi()
+    }
+
+    private fun highlight(s: Session) {
+        val line = s.queue.getOrNull(s.pos)
+        // Only boxes from the screen currently showing are still in the right place.
+        controls?.highlight(line?.takeIf { it.batch == s.batch }?.bounds)
     }
 
     private val utteranceListener = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {}
+
+        override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+            main.post {
+                val s = session ?: return@post
+                if (utteranceId != null && utteranceId == s.speakingId) {
+                    s.offset = s.speakBase + start
+                }
+            }
+        }
 
         override fun onDone(utteranceId: String?) {
             main.post { onUtteranceFinished(utteranceId) }
@@ -236,49 +331,98 @@ class ReaderService : AccessibilityService() {
 
     private fun onUtteranceFinished(utteranceId: String?) {
         val s = session ?: return
-        if (utteranceId == null || utteranceId != s.lastUtteranceId) return
-        s.lastUtteranceId = null
-        if (s.screens >= MAX_SCREENS) {
-            endSession("Stopped after $MAX_SCREENS screens")
-            return
+        if (utteranceId == null || utteranceId != s.speakingId) return
+        s.speakingId = null
+        s.pos++
+        s.offset = 0
+        speakCurrent(s)
+    }
+
+    private fun endSession(message: String?) {
+        session = null
+        main.removeCallbacksAndMessages(null)
+        tts?.stop()
+        if (message != null) {
+            tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "notice")
         }
-        scrollThenRead(s)
+        controls?.highlight(null)
+        controls?.setPassThrough(false)
+        updateUi()
     }
 
     // ---------------------------------------------------------------- scrolling
 
-    /**
-     * Prefer the app's own "scroll down" action on its main vertical list
-     * (exact, one full screen). If the app doesn't offer one (web pages, many
-     * custom views), fall back to a real finger-swipe gesture, which works
-     * almost everywhere. Horizontal lists and tab pagers are never used, so
-     * reading can't flip you to another tab.
-     */
-    private fun scrollThenRead(s: Session) {
-        val window = findAppWindow()
-        val root = window?.root
-        if (window == null || root == null) {
+    /** Scroll down, then add whatever new text appeared to the queue. */
+    private fun loadMore(s: Session, then: () -> Unit) {
+        if (s.batch + 1 >= MAX_SCREENS) {
+            endSession("Stopped after $MAX_SCREENS screens")
+            return
+        }
+        s.loading = true
+        controls?.highlight(null)
+        scroll { ok ->
+            if (session !== s) return@scroll
+            if (!ok) {
+                endSession("Couldn't scroll this screen")
+                return@scroll
+            }
+            main.postDelayed({ afterScroll(s, then) }, SETTLE_MS)
+        }
+    }
+
+    private fun afterScroll(s: Session, then: () -> Unit) {
+        if (session !== s) return
+        val root = findAppRoot()
+        if (root == null) {
             endSession("Lost the screen. Stopped.")
             return
         }
+        if (s.packageName != null && root.packageName?.toString() != s.packageName) {
+            endSession("App changed. Stopped.")
+            return
+        }
+        s.batch++
+        val fresh = collectScreen(s, root)
+        if (fresh.isEmpty()) {
+            s.staleRounds++
+            if (s.staleRounds >= STALE_LIMIT) {
+                endSession("End of page")
+            } else {
+                loadMore(s, then)
+            }
+            return
+        }
+        s.staleRounds = 0
+        s.queue.addAll(fresh)
+        s.loading = false
+        then()
+    }
 
+    /**
+     * Prefer the app's own "scroll down" action on its main vertical list.
+     * Otherwise a real finger-swipe. Horizontal lists and tab pagers are never
+     * used, so reading can't flip you to another tab.
+     */
+    private fun scroll(done: (Boolean) -> Unit) {
+        val window = findAppWindow()
+        val root = window?.root
+        if (window == null || root == null) {
+            done(false)
+            return
+        }
         val list = findVerticalScrollable(root)
         if (list != null &&
             list.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id)
         ) {
-            readAfterSettle(s)
+            done(true)
             return
         }
-
         val area = Rect().also { window.getBoundsInScreen(it) }
+        controls?.setPassThrough(true)
         swipeUp(area) { ok ->
-            if (session !== s) return@swipeUp
-            if (ok) readAfterSettle(s) else endSession("Couldn't scroll this screen")
+            controls?.setPassThrough(false)
+            done(ok)
         }
-    }
-
-    private fun readAfterSettle(s: Session) {
-        main.postDelayed({ if (session === s) readScreen() }, SETTLE_MS)
     }
 
     private fun findVerticalScrollable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -313,11 +457,9 @@ class ReaderService : AccessibilityService() {
             return
         }
         val x = area.exactCenterX()
-        val startY = area.top + area.height() * 0.72f
-        val endY = area.top + area.height() * 0.30f
         val path = Path().apply {
-            moveTo(x, startY)
-            lineTo(x, endY)
+            moveTo(x, area.top + area.height() * 0.72f)
+            lineTo(x, area.top + area.height() * 0.30f)
         }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0L, 450L))
@@ -332,9 +474,9 @@ class ReaderService : AccessibilityService() {
     // ---------------------------------------------------------------- finding the app
 
     /**
-     * The app's own window. The status bar, navigation bar, keyboard and this
-     * service's floating button are all different window types, so they're
-     * left out by picking TYPE_APPLICATION only.
+     * The app's own window. The status bar, navigation bar, keyboard and our
+     * own floating controls are all different window types, so they're left
+     * out by picking TYPE_APPLICATION only.
      */
     private fun findAppWindow(): AccessibilityWindowInfo? {
         val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
@@ -355,109 +497,14 @@ class ReaderService : AccessibilityService() {
         return if (id > 0) resources.getDimensionPixelSize(id) else 0
     }
 
-    // ---------------------------------------------------------------- floating button
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun showBubble() {
-        if (bubble != null) return
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val size = dp(54)
-        val dm = resources.displayMetrics
-
-        val view = ImageView(this).apply {
-            setImageResource(R.drawable.ic_play)
-            val pad = dp(15)
-            setPadding(pad, pad, pad, pad)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xE61F4E79.toInt())
-            }
-            contentDescription = "Start reading"
-        }
-
-        val params = WindowManager.LayoutParams(
-            size,
-            size,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = Prefs.bubbleX(this@ReaderService, dm.widthPixels - size - dp(8))
-            y = Prefs.bubbleY(this@ReaderService, dm.heightPixels / 3)
-        }
-
-        view.setOnTouchListener(BubbleTouch(wm, params))
-        try {
-            wm.addView(view, params)
-            bubble = view
-            updateUi()
-        } catch (e: Exception) {
-            Log.w(TAG, "Couldn't show floating button", e)
-        }
-    }
-
-    private fun hideBubble() {
-        val view = bubble ?: return
-        try {
-            (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view)
-        } catch (e: Exception) {
-            Log.w(TAG, "Couldn't remove floating button", e)
-        }
-        bubble = null
-    }
-
-    /** Tap = start/stop. Drag = move the button (position is remembered). */
-    private inner class BubbleTouch(
-        private val wm: WindowManager,
-        private val p: WindowManager.LayoutParams,
-    ) : View.OnTouchListener {
-        private val slop = ViewConfiguration.get(this@ReaderService).scaledTouchSlop
-        private var downX = 0f
-        private var downY = 0f
-        private var startX = 0
-        private var startY = 0
-        private var dragging = false
-
-        override fun onTouch(v: View, e: MotionEvent): Boolean {
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX
-                    downY = e.rawY
-                    startX = p.x
-                    startY = p.y
-                    dragging = false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - downX
-                    val dy = e.rawY - downY
-                    if (!dragging && (abs(dx) > slop || abs(dy) > slop)) dragging = true
-                    if (dragging) {
-                        p.x = startX + dx.toInt()
-                        p.y = startY + dy.toInt()
-                        wm.updateViewLayout(v, p)
-                    }
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (dragging) {
-                        Prefs.setBubblePos(this@ReaderService, p.x, p.y)
-                    } else {
-                        v.performClick()
-                        toggle()
-                    }
-                }
-            }
-            return true
-        }
-    }
-
     // ---------------------------------------------------------------- helpers
 
     private fun updateUi() {
-        bubble?.let {
-            it.setImageResource(if (isReading) R.drawable.ic_stop else R.drawable.ic_play)
-            it.contentDescription = if (isReading) "Stop reading" else "Start reading"
+        val s = session
+        if (s == null) {
+            controls?.showIdle()
+        } else {
+            controls?.showReading(s.paused, Prefs.speechRate(this))
         }
         refreshTile(this)
     }
@@ -465,6 +512,4 @@ class ReaderService : AccessibilityService() {
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
-
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }

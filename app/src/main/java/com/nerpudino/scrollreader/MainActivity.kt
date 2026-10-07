@@ -46,6 +46,7 @@ class MainActivity : Activity() {
         }
 
         col.addView(title("Scroll Reader", 26f))
+        col.addView(body("Version ${BuildConfig.VERSION_NAME}").also { it.alpha = 0.6f })
         col.addView(body("Reads the app you're in out loud, then keeps scrolling down and reading until the end. It skips the status bar (time, battery, signal)."))
 
         status = title("", 18f).also { it.setPadding(0, dp(16), 0, dp(4)) }
@@ -71,11 +72,11 @@ class MainActivity : Activity() {
         })
 
         col.addView(heading("How to use"))
-        col.addView(body("1. Open any app.\n2. Tap the round ▶ floating button. It reads, scrolls, and keeps going.\n3. Tap it again (■) to stop. Drag it to move it.\n\nOr pull down Quick Settings and tap the \"Read screen\" tile."))
+        col.addView(body("1. Open any app.\n2. Tap the round ▶ button to read from the top of the screen, or long-press it and tap the line you want to start from.\n3. While reading, the control bar gives you:\n   ⏮ Back: restart this part, or tap again for the previous part\n   ⏯ Pause / Resume: carries on from the same word\n   ⏭ Skip: jump to the next part\n   − / + Speed: slower or faster, applies straight away\n   ■ Stop\n4. Drag the dotted handle to move the bar.\n\nOr pull down Quick Settings and tap the \"Read screen\" tile."))
 
         col.addView(heading("Settings"))
         col.addView(Switch(this).apply {
-            text = "Show floating button"
+            text = "Show floating controls"
             isChecked = Prefs.showBubble(this@MainActivity)
             setOnCheckedChangeListener { _, checked ->
                 Prefs.setShowBubble(this@MainActivity, checked)
@@ -85,18 +86,18 @@ class MainActivity : Activity() {
 
         val speedLabel = body("")
         col.addView(speedLabel)
-        // SeekBar 0..15 -> speed 0.5x..2.0x in 0.1 steps
+        // SeekBar 0..10 -> speed 0.5x..3.0x in 0.25 steps (same steps as the − / + buttons)
         val current = Prefs.speechRate(this)
         fun label(rate: Float) {
-            speedLabel.text = "Reading speed: %.1fx".format(rate)
+            speedLabel.text = "Reading speed: %.2fx".format(rate)
         }
         label(current)
         col.addView(SeekBar(this).apply {
-            max = 15
-            progress = ((current - 0.5f) * 10).toInt().coerceIn(0, 15)
+            max = 10
+            progress = ((current - 0.5f) / 0.25f).toInt().coerceIn(0, 10)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                    val rate = 0.5f + p / 10f
+                    val rate = 0.5f + p * 0.25f
                     label(rate)
                     if (fromUser) Prefs.setSpeechRate(this@MainActivity, rate)
                 }

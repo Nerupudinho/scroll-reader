@@ -3,6 +3,9 @@ package com.nerpudino.scrollreader
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 
+/** One readable block of text and where it sits on screen. */
+data class Line(val text: String, val bounds: Rect, val batch: Int)
+
 /**
  * Walks one app window's accessibility tree and returns the visible text in
  * reading order (top-to-bottom as the app lays it out).
@@ -11,21 +14,25 @@ import android.view.accessibility.AccessibilityNodeInfo
  * window, and ReaderService only hands us the app's own window. As a second
  * guard, anything that sits entirely inside the status-bar strip at the top
  * of the screen is dropped too.
+ *
+ * Nothing is classified or filtered as "header" or "ad": everything visible
+ * is read, and the user skips with the Skip button.
  */
 object TextCollector {
 
     private const val MAX_DEPTH = 80
 
-    fun collect(root: AccessibilityNodeInfo, statusBarBottom: Int): List<String> {
-        val out = LinkedHashSet<String>() // keeps order, drops exact repeats on one screen
-        walk(root, out, statusBarBottom, 0)
-        return out.toList()
+    fun collect(root: AccessibilityNodeInfo, statusBarBottom: Int, batch: Int): List<Line> {
+        val out = LinkedHashMap<String, Line>() // keeps order, drops exact repeats on one screen
+        walk(root, out, statusBarBottom, batch, 0)
+        return out.values.toList()
     }
 
     private fun walk(
         node: AccessibilityNodeInfo,
-        out: MutableSet<String>,
+        out: MutableMap<String, Line>,
         statusBarBottom: Int,
+        batch: Int,
         depth: Int,
     ) {
         if (depth > MAX_DEPTH) return
@@ -36,12 +43,14 @@ object TextCollector {
 
         spokenTextOf(node)?.let { text ->
             val insideStatusBar = bounds.bottom <= statusBarBottom
-            if (!insideStatusBar && !bounds.isEmpty) out.add(text)
+            if (!insideStatusBar && !bounds.isEmpty && text !in out) {
+                out[text] = Line(text, bounds, batch)
+            }
         }
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            walk(child, out, statusBarBottom, depth + 1)
+            walk(child, out, statusBarBottom, batch, depth + 1)
         }
     }
 

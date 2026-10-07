@@ -11,14 +11,35 @@ android {
         applicationId = "com.nerpudino.scrollreader"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // Bump BOTH on every release: versionCode +1, versionName per semver.
+        // The release tag is v<versionName>; see CHANGELOG.md.
+        versionCode = 2
+        versionName = "1.1.0"
+    }
+
+    // One fixed key for every build, so each new version installs over the old one.
+    // (Personal sideloaded app: the key lives in the repo on purpose.)
+    signingConfigs {
+        create("fixed") {
+            storeFile = file("scrollreader.keystore")
+            storePassword = "scrollreader"
+            keyAlias = "scrollreader"
+            keyPassword = "scrollreader"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("fixed")
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

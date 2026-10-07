@@ -2,6 +2,7 @@ name: Build APK
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -23,33 +24,47 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+      - name: Read version
+        id: version
+        run: |
+          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Version $NAME (code $CODE)"
+
       - name: Build debug APK
         run: |
           set -o pipefail
           gradle assembleDebug --console=plain 2>&1 | tee build.log
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk ScrollReader.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk "ScrollReader-v${{ steps.version.outputs.name }}.apk"
 
-      # A release gives a direct .apk download link (no zip).
+      # One release per version. Pushing without bumping the version builds
+      # (to catch errors) but does not overwrite an existing release.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" ScrollReader.apk \
-            --title "Scroll Reader (build ${{ github.run_number }})" \
-            --notes "Tap ScrollReader.apk below to download and install." \
+          TAG="v${{ steps.version.outputs.name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::warning::Release $TAG already exists - bump versionName to publish a new one."
+            exit 0
+          fi
+          NOTES=$(awk "/^## $TAG /{f=1;next} /^## /{f=0} f" CHANGELOG.md)
+          gh release create "$TAG" "ScrollReader-$TAG.apk" \
+            --title "Scroll Reader $TAG" \
+            --notes "${NOTES:-See CHANGELOG.md}" \
             --latest
 
-      # If the build breaks, post the error as an issue so it can be fixed.
       - name: Report build failure
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "Build ${{ github.run_number }} failed."
+            echo "Build ${{ github.run_number }} (v${{ steps.version.outputs.name }}) failed."
             echo
             echo '```'
             if [ -f build.log ]; then grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -80; echo "----- tail -----"; tail -60 build.log; fi

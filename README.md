@@ -7,10 +7,24 @@ An Android accessibility app that reads the app you're in out loud, scrolls down
 - **Doesn't repeat itself.** Text already read on the last two screens is skipped. That covers the overlap between scrolls and fixed headers or tab bars.
 - **Knows when to stop.** It stops when two scrolls in a row bring nothing new ("End of page"), when you switch apps, or after 80 screens on endless feeds.
 
-## Start and stop
+## Controls
 
-- **Floating button** (▶ / ■). It sits on top of every app once the service is on. Tap to start or stop, drag to move.
-- **Quick Settings tile** "Read screen". Pull down the shade and tap it. The shade closes and reading starts.
+- **▶ button** (floats over every app once the service is on)
+  - Tap: read from the top of what's on screen now.
+  - Long-press, then tap a line: start reading from that line.
+  - Drag: move it.
+- **Control bar** (while reading): ⏮ Back · ⏯ Pause/Resume · ⏭ Skip · − Slower · speed · + Faster · ■ Stop
+  - Pause resumes at the same word.
+  - Back restarts the current part; pressed again near its start, it goes to the previous part.
+  - Skip jumps to the next part. Nothing is auto-filtered, so you decide what to skip.
+  - Speed runs from 0.5× to 3× in 0.25 steps, applies immediately and is remembered.
+- **Quick Settings tile** "Read screen": closes the shade and starts reading.
+
+## Versions
+
+Every change bumps `versionName` and `versionCode` in `app/build.gradle.kts` and adds a `CHANGELOG.md` entry.
+The build publishes GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
+All builds are signed with the same key (`app/scrollreader.keystore`), so new versions install over old ones.
 
 The home-screen icon opens the setup screen. A home-screen icon can't start reading because tapping it takes you to the home screen, which is the wrong thing to read.
 

@@ -10,6 +10,9 @@ object Prefs {
     private const val KEY_BUBBLE_X = "bubble_x"
     private const val KEY_BUBBLE_Y = "bubble_y"
 
+    const val MIN_RATE = 0.5f
+    const val MAX_RATE = 3.0f
+
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -18,9 +21,11 @@ object Prefs {
         prefs(ctx).edit().putBoolean(KEY_BUBBLE, value).apply()
 
     /** 1.0 = normal speed. */
-    fun speechRate(ctx: Context): Float = prefs(ctx).getFloat(KEY_RATE, 1.0f)
+    fun speechRate(ctx: Context): Float =
+        prefs(ctx).getFloat(KEY_RATE, 1.0f).coerceIn(MIN_RATE, MAX_RATE)
+
     fun setSpeechRate(ctx: Context, value: Float) =
-        prefs(ctx).edit().putFloat(KEY_RATE, value).apply()
+        prefs(ctx).edit().putFloat(KEY_RATE, value.coerceIn(MIN_RATE, MAX_RATE)).apply()
 
     fun bubbleX(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_X, default)
     fun bubbleY(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_Y, default)
