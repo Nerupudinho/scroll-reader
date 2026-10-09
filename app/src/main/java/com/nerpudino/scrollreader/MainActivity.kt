@@ -106,6 +106,12 @@ class MainActivity : Activity() {
             })
         })
 
+        col.addView(heading("Troubleshooting"))
+        col.addView(Button(this).apply {
+            text = "Audio diagnostics (car / Bluetooth)"
+            setOnClickListener { startActivity(Intent(this@MainActivity, DiagnosticsActivity::class.java)) }
+        })
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             col.addView(Button(this).apply {
                 text = "Add \"Read screen\" to Quick Settings"

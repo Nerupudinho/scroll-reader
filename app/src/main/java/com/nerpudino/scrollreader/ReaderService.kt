@@ -7,6 +7,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.graphics.Path
 import android.graphics.Rect
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -60,6 +64,36 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
     private var ttsReady = false
     private var controls: FloatingControls? = null
 
+    // Audio diagnostics: log where the voice goes and every Bluetooth/route change.
+    private var lastPlayers = ""
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) {
+            if (added.any { it.isSink }) {
+                diag("Output connected: " + added.filter { it.isSink }.joinToString { AudioProbe.device(it) } +
+                    "\n  " + AudioProbe.compact(this@ReaderService))
+            }
+        }
+
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) {
+            if (removed.any { it.isSink }) {
+                diag("Output DISCONNECTED: " + removed.filter { it.isSink }.joinToString { AudioProbe.device(it) } +
+                    "\n  " + AudioProbe.compact(this@ReaderService))
+            }
+        }
+    }
+    private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
+        override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
+            if (session == null) return
+            val now = AudioProbe.activePlayers(this@ReaderService)
+            if (now != lastPlayers) {
+                lastPlayers = now
+                diag("Players now: $now")
+            }
+        }
+    }
+
+    private fun diag(msg: String) = DiagLog.log(this, msg)
+
     private var session: Session? = null
     private var sessionCounter = 0
 
@@ -93,12 +127,22 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
             if (ttsReady) {
                 tts?.setOnUtteranceProgressListener(utteranceListener)
                 tts?.setSpeechRate(Prefs.speechRate(this))
+                diag("Service on (v${BuildConfig.VERSION_NAME}). Voice engine: ${tts?.defaultEngine}" +
+                    ", installed: ${tts?.engines?.joinToString { it.name }}")
             } else {
+                diag("Voice engine FAILED to start: $status")
                 Log.w(TAG, "Text-to-speech failed to start: $status")
             }
         }
         controls = FloatingControls(this, this).also {
             if (Prefs.showBubble(this)) it.show()
+        }
+        try {
+            val am = AudioProbe.am(this)
+            am.registerAudioDeviceCallback(deviceCallback, main)
+            am.registerAudioPlaybackCallback(playbackCallback, main)
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio callbacks failed", e)
         }
         refreshTile(this)
     }
@@ -113,6 +157,13 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         stopReading(announce = false)
         controls?.destroy()
         controls = null
+        try {
+            val am = AudioProbe.am(this)
+            am.unregisterAudioDeviceCallback(deviceCallback)
+            am.unregisterAudioPlaybackCallback(playbackCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio callbacks removal failed", e)
+        }
         tts?.shutdown()
         tts = null
         instance = null
@@ -237,6 +288,8 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
             lines.filter { it.bounds.bottom > fromY }
         }
         s.queue.addAll(start)
+        lastPlayers = ""
+        diag(AudioProbe.snapshot(this, "READING STARTED in ${s.packageName} (${start.size} blocks)"))
         updateUi()
         speakCurrent(s)
     }
@@ -308,7 +361,17 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
     }
 
     private val utteranceListener = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String?) {}
+        override fun onStart(utteranceId: String?) {
+            // Give the engine's player a moment to appear, then record where it's playing.
+            main.postDelayed({
+                diag("Voice started #$utteranceId -> ${AudioProbe.compact(this@ReaderService)}")
+            }, 400)
+        }
+
+        override fun onError(utteranceId: String?, errorCode: Int) {
+            diag("Voice ERROR #$utteranceId code $errorCode")
+            main.post { onUtteranceFinished(utteranceId) }
+        }
 
         override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
             main.post {
@@ -339,6 +402,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
     }
 
     private fun endSession(message: String?) {
+        diag("Reading ended: ${message ?: "(silent stop)"}")
         session = null
         main.removeCallbacksAndMessages(null)
         tts?.stop()

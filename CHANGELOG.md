@@ -3,6 +3,20 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.2.0 (2026-10-09)
+
+### Added
+- Audio diagnostics screen (setup screen → Troubleshooting → Audio diagnostics):
+  - Five voice tests, one per audio channel: media (current), media with audio focus,
+    accessibility, navigation voice, and phone-call channel over Bluetooth call audio.
+  - Each test logs the full audio state and the exact device the voice played on.
+  - Share, copy and clear the log.
+- Audio logging while reading: audio state at start, the device each spoken block plays on,
+  player changes, Bluetooth/output connects and disconnects, and voice errors.
+
+### Unchanged
+- How reading sounds. This version only observes and logs; no audio behaviour changed.
+
 ## v1.1.1 (2026-10-08)
 
 ### Changed
