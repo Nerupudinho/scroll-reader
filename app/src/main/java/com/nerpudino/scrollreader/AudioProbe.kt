@@ -13,11 +13,11 @@ import android.os.Build
  */
 object AudioProbe {
 
-    /** What Scroll Reader's voice uses today (Android's default for text-to-speech). */
-    val DEFAULT_TTS_ATTRS: AudioAttributes = AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_MEDIA)
-        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-        .build()
+    /** The audio attributes Scroll Reader's voice uses, from the voice channel setting. */
+    fun readerAttrs(ctx: Context): AudioAttributes = attrs(
+        if (Prefs.voiceChannel(ctx) == Prefs.CHANNEL_MEDIA) AudioAttributes.USAGE_MEDIA
+        else AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY
+    )
 
     fun am(ctx: Context) = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -95,7 +95,7 @@ object AudioProbe {
 
     /** One-line summary used while reading. */
     fun compact(ctx: Context): String =
-        "voice route: ${routeFor(ctx, DEFAULT_TTS_ATTRS)} | playing: ${activePlayers(ctx)}"
+        "voice (${Prefs.voiceChannel(ctx)}) route: ${routeFor(ctx, readerAttrs(ctx))} | playing: ${activePlayers(ctx)}"
 
     /** Full picture of the audio system. */
     fun snapshot(ctx: Context, title: String): String {
@@ -119,7 +119,9 @@ object AudioProbe {
         sb.append("Volumes: media ").append(vol(AudioManager.STREAM_MUSIC))
             .append(", accessibility ").append(vol(AudioManager.STREAM_ACCESSIBILITY))
             .append(", call ").append(vol(AudioManager.STREAM_VOICE_CALL)).append('\n')
-        sb.append("Route for media (what the reader uses): ").append(routeFor(ctx, DEFAULT_TTS_ATTRS)).append('\n')
+        sb.append("Reader voice channel: ").append(Prefs.voiceChannel(ctx))
+            .append(" -> ").append(routeFor(ctx, readerAttrs(ctx))).append('\n')
+        sb.append("Route for media: ").append(routeFor(ctx, attrs(AudioAttributes.USAGE_MEDIA))).append('\n')
         sb.append("Route for accessibility: ").append(routeFor(ctx, attrs(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY))).append('\n')
         sb.append("Route for navigation voice: ").append(routeFor(ctx, attrs(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE))).append('\n')
         sb.append("Active players: ").append(activePlayers(ctx)).append('\n')

@@ -200,6 +200,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
             if (ttsReady) {
                 tts?.setOnUtteranceProgressListener(utteranceListener)
                 tts?.setSpeechRate(Prefs.speechRate(this))
+                tts?.setAudioAttributes(AudioProbe.readerAttrs(this))
                 diag("Service on (v${BuildConfig.VERSION_NAME}). Voice engine: ${tts?.defaultEngine}" +
                     ", installed: ${tts?.engines?.joinToString { it.name }}")
             } else {
@@ -367,6 +368,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
             return
         }
         tts?.setSpeechRate(Prefs.speechRate(this))
+        tts?.setAudioAttributes(AudioProbe.readerAttrs(this))
         val s = Session(++sessionCounter, root.packageName?.toString())
         session = s
 

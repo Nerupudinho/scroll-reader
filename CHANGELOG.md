@@ -3,6 +3,18 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.4.0 (2026-10-09)
+
+### Fixed
+- Voice not coming out of the car speakers. The v1.2.0 diagnostics log showed that, connected
+  to the car (i20), Android sent the media channel to a "remote submix" capture route instead of
+  the car's Bluetooth, while the accessibility channel went straight to Bluetooth media (A2DP).
+  The voice now plays on the accessibility channel by default.
+
+### Added
+- Setting: "Voice output channel" with Accessibility (default) or Media.
+- The diagnostics log now records which channel the reader is using.
+
 ## v1.3.0 (2026-10-09)
 
 ### Fixed

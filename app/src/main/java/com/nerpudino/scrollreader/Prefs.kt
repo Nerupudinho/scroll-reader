@@ -10,6 +10,10 @@ object Prefs {
     private const val KEY_BUBBLE_X = "bubble_x"
     private const val KEY_BUBBLE_Y = "bubble_y"
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+    private const val KEY_VOICE_CHANNEL = "voice_channel"
+
+    const val CHANNEL_ACCESSIBILITY = "accessibility"
+    const val CHANNEL_MEDIA = "media"
 
     const val MIN_RATE = 0.5f
     const val MAX_RATE = 3.0f
@@ -32,6 +36,17 @@ object Prefs {
     fun keepScreenOn(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_KEEP_SCREEN_ON, true)
     fun setKeepScreenOn(ctx: Context, value: Boolean) =
         prefs(ctx).edit().putBoolean(KEY_KEEP_SCREEN_ON, value).apply()
+
+    /**
+     * Audio channel the voice plays on. Accessibility is the default: in the car,
+     * media was captured by a remote-submix route and never reached the speakers,
+     * while accessibility went straight to the car's Bluetooth.
+     */
+    fun voiceChannel(ctx: Context): String =
+        prefs(ctx).getString(KEY_VOICE_CHANNEL, CHANNEL_ACCESSIBILITY) ?: CHANNEL_ACCESSIBILITY
+
+    fun setVoiceChannel(ctx: Context, value: String) =
+        prefs(ctx).edit().putString(KEY_VOICE_CHANNEL, value).apply()
 
     fun bubbleX(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_X, default)
     fun bubbleY(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_Y, default)

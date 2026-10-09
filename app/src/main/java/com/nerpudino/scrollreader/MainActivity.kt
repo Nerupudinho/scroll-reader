@@ -14,6 +14,8 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
@@ -90,6 +92,28 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, checked -> Prefs.setKeepScreenOn(this@MainActivity, checked) }
         })
         col.addView(body("Scrolling only works while the screen is on. If the screen goes off anyway, reading pauses and carries on when you unlock.").also { it.alpha = 0.7f })
+
+        col.addView(body("Voice output channel").also { it.setTypeface(it.typeface, Typeface.BOLD) })
+        val accId = View.generateViewId()
+        val mediaId = View.generateViewId()
+        col.addView(RadioGroup(this).apply {
+            addView(RadioButton(this@MainActivity).apply {
+                id = accId
+                text = "Accessibility (recommended, reaches car Bluetooth)"
+            })
+            addView(RadioButton(this@MainActivity).apply {
+                id = mediaId
+                text = "Media (same as music apps)"
+            })
+            check(if (Prefs.voiceChannel(this@MainActivity) == Prefs.CHANNEL_MEDIA) mediaId else accId)
+            setOnCheckedChangeListener { _, checked ->
+                Prefs.setVoiceChannel(
+                    this@MainActivity,
+                    if (checked == mediaId) Prefs.CHANNEL_MEDIA else Prefs.CHANNEL_ACCESSIBILITY
+                )
+            }
+        })
+        col.addView(body("Applies the next time you start reading. Accessibility volume is set with the volume buttons while it's reading.").also { it.alpha = 0.7f })
 
         val speedLabel = body("")
         col.addView(speedLabel)
