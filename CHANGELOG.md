@@ -3,6 +3,19 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.3.0 (2026-10-09)
+
+### Fixed
+- Long articles no longer stop when the phone's screen times out. The screen stays on while
+  reading (not while paused), so scrolling keeps working.
+- If the screen goes off anyway (power button), reading no longer stops with "Couldn't scroll".
+  It finishes the text already loaded, then pauses in place, says "Paused. Unlock your phone
+  to continue.", and resumes automatically from the same spot when you unlock.
+
+### Added
+- Setting: "Keep screen on while reading" (on by default).
+- Screen off / on / unlock events are written to the audio diagnostics log.
+
 ## v1.2.0 (2026-10-09)
 
 ### Added

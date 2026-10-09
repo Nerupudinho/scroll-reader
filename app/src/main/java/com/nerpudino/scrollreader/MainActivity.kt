@@ -84,6 +84,13 @@ class MainActivity : Activity() {
             }
         })
 
+        col.addView(Switch(this).apply {
+            text = "Keep screen on while reading"
+            isChecked = Prefs.keepScreenOn(this@MainActivity)
+            setOnCheckedChangeListener { _, checked -> Prefs.setKeepScreenOn(this@MainActivity, checked) }
+        })
+        col.addView(body("Scrolling only works while the screen is on. If the screen goes off anyway, reading pauses and carries on when you unlock.").also { it.alpha = 0.7f })
+
         val speedLabel = body("")
         col.addView(speedLabel)
         // SeekBar 0..10 -> speed 0.5x..3.0x in 0.25 steps (same steps as the − / + buttons)

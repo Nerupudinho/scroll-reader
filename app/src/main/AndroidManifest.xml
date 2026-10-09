@@ -3,6 +3,8 @@
 
     <!-- Needed only for the "phone call channel" audio test. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Keeps the screen awake while reading so scrolling keeps working. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="false"

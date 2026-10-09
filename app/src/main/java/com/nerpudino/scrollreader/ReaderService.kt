@@ -3,7 +3,11 @@ package com.nerpudino.scrollreader
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.Context
 import android.graphics.Path
 import android.graphics.Rect
@@ -14,6 +18,7 @@ import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.service.quicksettings.TileService
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -94,6 +99,73 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
 
     private fun diag(msg: String) = DiagLog.log(this, msg)
 
+    // Screen: keep it awake while reading; if it goes off anyway, pause and resume on unlock.
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val s = session ?: return
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> diag("Screen turned OFF while reading (paused=${s.paused})")
+                Intent.ACTION_SCREEN_ON -> {
+                    diag("Screen turned on")
+                    if (!isLocked()) resumeAfterScreen(s)
+                }
+                Intent.ACTION_USER_PRESENT -> {
+                    diag("Phone unlocked")
+                    resumeAfterScreen(s)
+                }
+            }
+        }
+    }
+
+    private fun screenUsable(): Boolean =
+        getSystemService(PowerManager::class.java).isInteractive && !isLocked()
+
+    private fun isLocked(): Boolean = getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
+    /** Needed to scroll but the screen is off/locked: pause in place instead of stopping. */
+    private fun pauseForScreen(s: Session) {
+        diag("Can't scroll: screen off or locked. Pausing at block ${s.pos}.")
+        s.loading = false
+        s.paused = true
+        s.screenPaused = true
+        silence(s)
+        controls?.highlight(null)
+        tts?.speak("Paused. Unlock your phone to continue.", TextToSpeech.QUEUE_FLUSH, null, "notice")
+        updateUi()
+    }
+
+    private fun resumeAfterScreen(s: Session) {
+        if (!s.screenPaused) return
+        s.screenPaused = false
+        s.paused = false
+        diag("Resuming after unlock")
+        updateUi()
+        // Give the app a moment to come back to the front before scrolling.
+        main.postDelayed({ if (session === s && !s.paused) speakCurrent(s) }, 1000)
+    }
+
+    /** Keep the screen on only while actively reading (not while paused). */
+    @Suppress("DEPRECATION")
+    private fun applyScreenHold() {
+        val s = session
+        val hold = s != null && !s.paused && Prefs.keepScreenOn(this)
+        controls?.setKeepScreenOn(hold)
+        if (hold) {
+            if (wakeLock?.isHeld != true) {
+                wakeLock = getSystemService(PowerManager::class.java)
+                    .newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "ScrollReader:reading")
+                    .apply {
+                        setReferenceCounted(false)
+                        acquire(3 * 60 * 60 * 1000L) // safety cap: 3 hours
+                    }
+            }
+        } else {
+            wakeLock?.takeIf { it.isHeld }?.release()
+            wakeLock = null
+        }
+    }
+
     private var session: Session? = null
     private var sessionCounter = 0
 
@@ -114,6 +186,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         var seen: Set<String> = emptySet()   // text from the last two screens
 
         var paused = false
+        var screenPaused = false    // paused automatically because the screen went off
         var loading = false
     }
 
@@ -144,6 +217,16 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         } catch (e: Exception) {
             Log.w(TAG, "Audio callbacks failed", e)
         }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(screenReceiver, filter)
+        }
         refreshTile(this)
     }
 
@@ -164,6 +247,12 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         } catch (e: Exception) {
             Log.w(TAG, "Audio callbacks removal failed", e)
         }
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Screen receiver removal failed", e)
+        }
+        wakeLock?.takeIf { it.isHeld }?.release()
         tts?.shutdown()
         tts = null
         instance = null
@@ -218,6 +307,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
     override fun onPauseResume() {
         val s = session ?: return
         s.paused = !s.paused
+        s.screenPaused = false
         if (s.paused) {
             silence(s)
         } else {
@@ -422,12 +512,16 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
             endSession("Stopped after $MAX_SCREENS screens")
             return
         }
+        if (!screenUsable()) {
+            pauseForScreen(s)
+            return
+        }
         s.loading = true
         controls?.highlight(null)
         scroll { ok ->
             if (session !== s) return@scroll
             if (!ok) {
-                endSession("Couldn't scroll this screen")
+                if (!screenUsable()) pauseForScreen(s) else endSession("Couldn't scroll this screen")
                 return@scroll
             }
             main.postDelayed({ afterScroll(s, then) }, SETTLE_MS)
@@ -436,6 +530,10 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
 
     private fun afterScroll(s: Session, then: () -> Unit) {
         if (session !== s) return
+        if (!screenUsable()) {
+            pauseForScreen(s)
+            return
+        }
         val root = findAppRoot()
         if (root == null) {
             endSession("Lost the screen. Stopped.")
@@ -570,6 +668,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         } else {
             controls?.showReading(s.paused, Prefs.speechRate(this))
         }
+        applyScreenHold()
         refreshTile(this)
     }
 

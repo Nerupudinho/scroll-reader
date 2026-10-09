@@ -182,6 +182,16 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
         speedLabel.text = formatRate(rate)
     }
 
+    /** Keep the screen awake while the controls window is visible. */
+    fun setKeepScreenOn(on: Boolean) {
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val newFlags = if (on) params.flags or flag else params.flags and flag.inv()
+        if (newFlags != params.flags) {
+            params.flags = newFlags
+            relayout()
+        }
+    }
+
     /** While a swipe gesture runs, let touches go straight through the controls. */
     fun setPassThrough(on: Boolean) {
         val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
