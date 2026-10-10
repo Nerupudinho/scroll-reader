@@ -13,8 +13,8 @@ android {
         targetSdk = 35
         // Bump BOTH on every release: versionCode +1, versionName per semver.
         // The release tag is v<versionName>; see CHANGELOG.md.
-        versionCode = 6
-        versionName = "1.4.0"
+        versionCode = 7
+        versionName = "1.5.0"
     }
 
     // One fixed key for every build, so each new version installs over the old one.

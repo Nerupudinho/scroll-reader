@@ -11,6 +11,7 @@ object Prefs {
     private const val KEY_BUBBLE_Y = "bubble_y"
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
     private const val KEY_VOICE_CHANNEL = "voice_channel"
+    private const val KEY_SKIP_CONTROLS = "skip_controls"
 
     const val CHANNEL_ACCESSIBILITY = "accessibility"
     const val CHANNEL_MEDIA = "media"
@@ -47,6 +48,11 @@ object Prefs {
 
     fun setVoiceChannel(ctx: Context, value: String) =
         prefs(ctx).edit().putString(KEY_VOICE_CHANNEL, value).apply()
+
+    /** Skip buttons and icons (Reply, Forward, Archive, Delete...). */
+    fun skipControls(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_SKIP_CONTROLS, true)
+    fun setSkipControls(ctx: Context, value: Boolean) =
+        prefs(ctx).edit().putBoolean(KEY_SKIP_CONTROLS, value).apply()
 
     fun bubbleX(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_X, default)
     fun bubbleY(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_Y, default)

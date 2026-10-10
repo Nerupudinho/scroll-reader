@@ -87,6 +87,13 @@ class MainActivity : Activity() {
         })
 
         col.addView(Switch(this).apply {
+            text = "Skip buttons and icons"
+            isChecked = Prefs.skipControls(this@MainActivity)
+            setOnCheckedChangeListener { _, checked -> Prefs.setSkipControls(this@MainActivity, checked) }
+        })
+        col.addView(body("Doesn't read things like Reply, Forward, Archive, Delete, Mark unread or Gemini. It only skips what the app itself marks as a button or icon, so all the text is still read.").also { it.alpha = 0.7f })
+
+        col.addView(Switch(this).apply {
             text = "Keep screen on while reading"
             isChecked = Prefs.keepScreenOn(this@MainActivity)
             setOnCheckedChangeListener { _, checked -> Prefs.setKeepScreenOn(this@MainActivity, checked) }

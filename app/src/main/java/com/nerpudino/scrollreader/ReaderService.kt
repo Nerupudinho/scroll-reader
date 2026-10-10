@@ -388,7 +388,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
 
     /** Text on the current screen that wasn't on the previous two screens. */
     private fun collectScreen(s: Session, root: AccessibilityNodeInfo): List<Line> {
-        val items = TextCollector.collect(root, statusBarHeight(), s.batch)
+        val items = TextCollector.collect(root, statusBarHeight(), s.batch, Prefs.skipControls(this))
         val texts = items.map { it.text }
         val fresh = items.filter { it.text !in s.seen }
         s.seen = s.previousTexts + texts

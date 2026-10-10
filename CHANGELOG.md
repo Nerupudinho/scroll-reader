@@ -3,6 +3,19 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.5.0 (2026-10-10)
+
+### Added
+- Skips buttons and icons: Reply, Forward, Archive, Delete, Mark unread, Gemini, the star,
+  menus and similar controls are no longer read aloud. Only elements the app itself marks
+  as a button, or tappable icons with no visible text, are skipped; all text content,
+  links and list rows are still read.
+- Setting: "Skip buttons and icons" (on by default).
+
+### Unchanged
+- Audio channel behaviour (still accessibility by default) while the car audio issue is
+  being diagnosed.
+
 ## v1.4.0 (2026-10-09)
 
 ### Fixed

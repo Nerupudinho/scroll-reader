@@ -15,33 +15,76 @@ data class Line(val text: String, val bounds: Rect, val batch: Int)
  * guard, anything that sits entirely inside the status-bar strip at the top
  * of the screen is dropped too.
  *
- * Nothing is classified or filtered as "header" or "ad": everything visible
- * is read, and the user skips with the Skip button.
+ * Nothing is classified or filtered as "header" or "ad": all visible text is
+ * read, and the user skips with the Skip button.
+ *
+ * Buttons and icons (Reply, Forward, Archive, Delete, Mark unread, Gemini...)
+ * are skipped when [skipControls] is on. That uses what the app itself reports,
+ * not a guess about the content:
+ *  - anything the app marks as a button (Button, ImageButton, Material buttons,
+ *    Compose buttons and HTML <button>s all report a "...Button" class), and
+ *  - icons: an element with only a hidden label and no visible text, that is
+ *    tappable or sits inside something tappable.
+ * Plain text, links, tappable list rows (e.g. inbox emails) and image captions
+ * are still read.
  */
 object TextCollector {
 
     private const val MAX_DEPTH = 80
 
-    fun collect(root: AccessibilityNodeInfo, statusBarBottom: Int, batch: Int): List<Line> {
+    fun collect(
+        root: AccessibilityNodeInfo,
+        statusBarBottom: Int,
+        batch: Int,
+        skipControls: Boolean,
+    ): List<Line> {
         val out = LinkedHashMap<String, Line>() // keeps order, drops exact repeats on one screen
-        walk(root, out, statusBarBottom, batch, 0)
+        Walker(out, statusBarBottom, batch, skipControls).walk(root, parentTappable = false, depth = 0)
         return out.values.toList()
     }
 
-    private fun walk(
-        node: AccessibilityNodeInfo,
-        out: MutableMap<String, Line>,
-        statusBarBottom: Int,
-        batch: Int,
-        depth: Int,
+    private class Walker(
+        val out: MutableMap<String, Line>,
+        val statusBarBottom: Int,
+        val batch: Int,
+        val skipControls: Boolean,
     ) {
-        if (depth > MAX_DEPTH) return
-        if (!node.isVisibleToUser) return
+        fun walk(node: AccessibilityNodeInfo, parentTappable: Boolean, depth: Int) {
+            if (depth > MAX_DEPTH) return
+            if (!node.isVisibleToUser) return
+            val tappable = node.isClickable || node.isLongClickable
 
-        val bounds = Rect()
-        node.getBoundsInScreen(bounds)
+            // A button's own label and everything inside it are skipped together.
+            if (skipControls && isButton(node)) return
 
-        spokenTextOf(node)?.let { text ->
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+
+            spokenTextOf(node, skipIcons = skipControls && (tappable || parentTappable))?.let { text ->
+                val insideStatusBar = bounds.bottom <= statusBarBottom
+                if (!insideStatusBar && !bounds.isEmpty && text !in out) {
+                    out[text] = Line(text, bounds, batch)
+                }
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                walk(child, tappable || parentTappable, depth + 1)
+            }
+        }
+    }
+
+    private fun isButton(node: AccessibilityNodeInfo): Boolean {
+        val cls = node.className?.toString() ?: return false
+        return cls.endsWith("Button")   // Button, ImageButton, MaterialButton, RadioButton, ToggleButton...
+    }
+
+    @Suppress("unused")
+    private fun legacyWalkMarker() {
+        // (kept for readability of the diff; no-op)
+        run {
+            val text: String? = null
+            text?.let {
             val insideStatusBar = bounds.bottom <= statusBarBottom
             if (!insideStatusBar && !bounds.isEmpty && text !in out) {
                 out[text] = Line(text, bounds, batch)
