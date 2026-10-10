@@ -19,7 +19,7 @@ data class Line(val text: String, val bounds: Rect, val batch: Int)
  * read, and the user skips with the Skip button.
  *
  * Buttons and icons (Reply, Forward, Archive, Delete, Mark unread, Gemini...)
- * are skipped when [skipControls] is on. That uses what the app itself reports,
+ * are skipped when skipControls is on. That uses what the app itself reports,
  * not a guess about the content:
  *  - anything the app marks as a button (Button, ImageButton, Material buttons,
  *    Compose buttons and HTML <button>s all report a "...Button" class), and
@@ -39,52 +39,31 @@ object TextCollector {
         skipControls: Boolean,
     ): List<Line> {
         val out = LinkedHashMap<String, Line>() // keeps order, drops exact repeats on one screen
-        Walker(out, statusBarBottom, batch, skipControls).walk(root, parentTappable = false, depth = 0)
+        walk(root, out, statusBarBottom, batch, skipControls, parentTappable = false, depth = 0)
         return out.values.toList()
     }
 
-    private class Walker(
-        val out: MutableMap<String, Line>,
-        val statusBarBottom: Int,
-        val batch: Int,
-        val skipControls: Boolean,
+    private fun walk(
+        node: AccessibilityNodeInfo,
+        out: MutableMap<String, Line>,
+        statusBarBottom: Int,
+        batch: Int,
+        skipControls: Boolean,
+        parentTappable: Boolean,
+        depth: Int,
     ) {
-        fun walk(node: AccessibilityNodeInfo, parentTappable: Boolean, depth: Int) {
-            if (depth > MAX_DEPTH) return
-            if (!node.isVisibleToUser) return
-            val tappable = node.isClickable || node.isLongClickable
+        if (depth > MAX_DEPTH) return
+        if (!node.isVisibleToUser) return
 
-            // A button's own label and everything inside it are skipped together.
-            if (skipControls && isButton(node)) return
+        // A button's own label and everything inside it are skipped together.
+        if (skipControls && isButton(node)) return
 
-            val bounds = Rect()
-            node.getBoundsInScreen(bounds)
+        val tappable = node.isClickable || node.isLongClickable
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
 
-            spokenTextOf(node, skipIcons = skipControls && (tappable || parentTappable))?.let { text ->
-                val insideStatusBar = bounds.bottom <= statusBarBottom
-                if (!insideStatusBar && !bounds.isEmpty && text !in out) {
-                    out[text] = Line(text, bounds, batch)
-                }
-            }
-
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i) ?: continue
-                walk(child, tappable || parentTappable, depth + 1)
-            }
-        }
-    }
-
-    private fun isButton(node: AccessibilityNodeInfo): Boolean {
-        val cls = node.className?.toString() ?: return false
-        return cls.endsWith("Button")   // Button, ImageButton, MaterialButton, RadioButton, ToggleButton...
-    }
-
-    @Suppress("unused")
-    private fun legacyWalkMarker() {
-        // (kept for readability of the diff; no-op)
-        run {
-            val text: String? = null
-            text?.let {
+        val skipIcons = skipControls && (tappable || parentTappable)
+        spokenTextOf(node, skipIcons)?.let { text ->
             val insideStatusBar = bounds.bottom <= statusBarBottom
             if (!insideStatusBar && !bounds.isEmpty && text !in out) {
                 out[text] = Line(text, bounds, batch)
@@ -93,20 +72,24 @@ object TextCollector {
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            walk(child, out, statusBarBottom, batch, depth + 1)
+            walk(child, out, statusBarBottom, batch, skipControls, tappable || parentTappable, depth + 1)
         }
     }
 
-    private fun spokenTextOf(node: AccessibilityNodeInfo): String? {
+    /** Button, ImageButton, MaterialButton, RadioButton, ToggleButton, Compose/HTML buttons... */
+    private fun isButton(node: AccessibilityNodeInfo): Boolean =
+        node.className?.toString()?.endsWith("Button") == true
+
+    private fun spokenTextOf(node: AccessibilityNodeInfo, skipIcons: Boolean): String? {
         if (node.isPassword) return null
 
         val text = node.text?.toString()?.let(::clean)
         if (!text.isNullOrEmpty()) return text
 
-        // Content descriptions are usually icon labels ("Search", "Like").
-        // Only use them on leaf nodes, so a card's summary description doesn't
-        // get read on top of the text inside it.
-        if (node.childCount == 0) {
+        // Content descriptions are hidden labels, usually on icons ("Archive", "Delete").
+        // Only use them on leaf nodes, so a card's summary description doesn't get read
+        // on top of the text inside it. A tappable icon is a control: skip it if asked.
+        if (node.childCount == 0 && !skipIcons) {
             val desc = node.contentDescription?.toString()?.let(::clean)
             if (!desc.isNullOrEmpty()) return desc
         }
