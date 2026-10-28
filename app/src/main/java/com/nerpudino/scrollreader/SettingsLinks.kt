@@ -10,6 +10,9 @@ import android.provider.Settings
 import android.util.Log
 
 object SettingsLinks {
+    /** Android 11+ settings page for one accessibility service (not in the public SDK constants). */
+    private const val ACTION_DETAILS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
+
     /**
      * Opens Scroll Reader's own on/off page in Accessibility settings (Android 11+).
      * Android only allows this for an app's own service, which is our case.
@@ -20,7 +23,7 @@ object SettingsLinks {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 ctx.startActivity(
-                    Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS)
+                    Intent(ACTION_DETAILS)
                         .putExtra(Intent.EXTRA_COMPONENT_NAME, component)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
