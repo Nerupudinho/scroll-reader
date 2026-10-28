@@ -3,6 +3,20 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.6.1 (2026-10-28)
+
+### Fixed
+- Voice not playing through the car (i20). Car tests showed media, media with audio focus,
+  navigation and call audio all reach the car speakers; only the accessibility channel,
+  the default since v1.4.0, did not. The voice is back on the media channel by default.
+  The v1.4.0 "remote submix" reading was wrong: that route is how the phone sends media
+  to the car.
+
+### Added
+- Scroll Reader now holds audio focus while reading: music pauses while it reads, a phone
+  call pauses the reading, and it resumes after the call.
+- Voice channel setting now has Media (default), Navigation voice and Accessibility.
+
 ## v1.6.0 (2026-10-28)
 
 ### Added

@@ -20,6 +20,7 @@ object Prefs {
 
     const val CHANNEL_ACCESSIBILITY = "accessibility"
     const val CHANNEL_MEDIA = "media"
+    const val CHANNEL_NAVIGATION = "navigation"
 
     const val MIN_RATE = 0.5f
     const val MAX_RATE = 3.0f
@@ -44,12 +45,12 @@ object Prefs {
         prefs(ctx).edit().putBoolean(KEY_KEEP_SCREEN_ON, value).apply()
 
     /**
-     * Audio channel the voice plays on. Accessibility is the default: in the car,
-     * media was captured by a remote-submix route and never reached the speakers,
-     * while accessibility went straight to the car's Bluetooth.
+     * Audio channel the voice plays on. Media is the default: the car tests on
+     * 2026-10-28 (vivo V2548 + i20) showed media, navigation and call audio all reach
+     * the car (via the phone's car-connection route), while accessibility did not.
      */
     fun voiceChannel(ctx: Context): String =
-        prefs(ctx).getString(KEY_VOICE_CHANNEL, CHANNEL_ACCESSIBILITY) ?: CHANNEL_ACCESSIBILITY
+        prefs(ctx).getString(KEY_VOICE_CHANNEL, CHANNEL_MEDIA) ?: CHANNEL_MEDIA
 
     fun setVoiceChannel(ctx: Context, value: String) =
         prefs(ctx).edit().putString(KEY_VOICE_CHANNEL, value).apply()

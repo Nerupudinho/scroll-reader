@@ -15,8 +15,11 @@ object AudioProbe {
 
     /** The audio attributes Scroll Reader's voice uses, from the voice channel setting. */
     fun readerAttrs(ctx: Context): AudioAttributes = attrs(
-        if (Prefs.voiceChannel(ctx) == Prefs.CHANNEL_MEDIA) AudioAttributes.USAGE_MEDIA
-        else AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY
+        when (Prefs.voiceChannel(ctx)) {
+            Prefs.CHANNEL_ACCESSIBILITY -> AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY
+            Prefs.CHANNEL_NAVIGATION -> AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
+            else -> AudioAttributes.USAGE_MEDIA
+        }
     )
 
     fun am(ctx: Context) = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager

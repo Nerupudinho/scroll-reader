@@ -49,8 +49,8 @@ class DiagnosticsActivity : Activity() {
 
     private val tests = listOf(
         Test(1, "Media, no audio focus. Scroll Reader used this up to version 1.3", AudioAttributes.USAGE_MEDIA, null, false),
-        Test(2, "Media, with audio focus", AudioAttributes.USAGE_MEDIA, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT, false),
-        Test(3, "Accessibility channel. Scroll Reader uses this by default from version 1.4", AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, false),
+        Test(2, "Media, with audio focus. Scroll Reader uses this by default from version 1.6.1", AudioAttributes.USAGE_MEDIA, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT, false),
+        Test(3, "Accessibility channel. Scroll Reader used this in versions 1.4 to 1.6.0", AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, false),
         Test(4, "Navigation voice channel, like Google Maps directions", AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, false),
         Test(5, "Phone call channel, over Bluetooth call audio", AudioAttributes.USAGE_VOICE_COMMUNICATION, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT, true),
     )

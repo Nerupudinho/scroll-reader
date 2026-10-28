@@ -145,6 +145,63 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         main.postDelayed({ if (session === s && !s.paused) speakCurrent(s) }, 1000)
     }
 
+    // Audio focus: tells Android (and the car) that Scroll Reader is playing. Music
+    // pauses while it reads; a phone call pauses the reading and it resumes after.
+    private var focusRequest: android.media.AudioFocusRequest? = null
+    private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { change ->
+        main.post { onFocusChange(change) }
+    }
+
+    private fun onFocusChange(change: Int) {
+        val s = session ?: return
+        when (change) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS,
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                diag("Audio focus lost ($change): pausing")
+                if (!s.paused) {
+                    s.paused = true
+                    s.focusPaused = change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                    silence(s)
+                    updateUi()
+                }
+            }
+            android.media.AudioManager.AUDIOFOCUS_GAIN -> {
+                diag("Audio focus back")
+                if (s.focusPaused) {
+                    s.focusPaused = false
+                    s.paused = false
+                    updateUi()
+                    speakCurrent(s)
+                }
+            }
+        }
+    }
+
+    /** Hold audio focus while reading (or while waiting to resume after a call). */
+    private fun applyAudioFocus() {
+        val s = session
+        val want = s != null && (!s.paused || s.focusPaused)
+        val am = AudioProbe.am(this)
+        if (want && focusRequest == null) {
+            val attrs = AudioProbe.readerAttrs(this)
+            val gain = if (attrs.usage == android.media.AudioAttributes.USAGE_MEDIA) {
+                android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT            // pause music
+            } else {
+                android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK   // lower music
+            }
+            val req = android.media.AudioFocusRequest.Builder(gain)
+                .setAudioAttributes(attrs)
+                .setOnAudioFocusChangeListener(focusListener, main)
+                .build()
+            val r = am.requestAudioFocus(req)
+            focusRequest = req
+            diag("Audio focus request -> " + if (r == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "GRANTED" else "result $r")
+        } else if (!want && focusRequest != null) {
+            focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            focusRequest = null
+        }
+    }
+
     /** Keep the screen on only while actively reading (not while paused). */
     @Suppress("DEPRECATION")
     private fun applyScreenHold() {
@@ -187,6 +244,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
 
         var paused = false
         var screenPaused = false    // paused automatically because the screen went off
+        var focusPaused = false     // paused automatically by a call or another app taking audio
         var loading = false
     }
 
@@ -340,6 +398,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         val s = session ?: return
         s.paused = !s.paused
         s.screenPaused = false
+        s.focusPaused = false
         if (s.paused) {
             silence(s)
         } else {
@@ -702,6 +761,7 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
             controls?.showReading(s.paused, Prefs.speechRate(this))
         }
         applyScreenHold()
+        applyAudioFocus()
         refreshTile(this)
     }
 
