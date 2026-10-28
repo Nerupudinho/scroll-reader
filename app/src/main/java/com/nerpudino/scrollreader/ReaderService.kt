@@ -277,6 +277,37 @@ class ReaderService : AccessibilityService(), FloatingControls.Listener {
         main.postDelayed({ startReading(fromY = null) }, SHADE_CLOSE_MS)
     }
 
+    /**
+     * Diagnostics: after [delayMs] (time to switch to the app in question), log the
+     * app's full element tree and what Scroll Reader would read from it.
+     */
+    fun recordScreenAfter(delayMs: Long) {
+        main.postDelayed({
+            val root = findAppRoot()
+            if (root == null) {
+                diag("SCREEN RECORD: no app window found")
+                toast("Couldn't find an app on screen")
+                return@postDelayed
+            }
+            val reads = TextCollector.collect(root, statusBarHeight(), 0, Prefs.skipControls(this))
+            diag("--- SCREEN RECORD: ${root.packageName} (v${BuildConfig.VERSION_NAME}, " +
+                "skip buttons=${Prefs.skipControls(this)}) ---\n" + ScreenDump.dump(root) +
+                "\nWould read ${reads.size} blocks:\n" +
+                reads.joinToString("\n") { "  • " + it.text.take(120) })
+            toast("Screen recorded. Open Audio diagnostics to share the log.")
+        }, delayMs)
+    }
+
+    /** "Reset button position" on the setup screen. */
+    fun resetControlsPosition() {
+        controls?.resetPosition()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        main.postDelayed({ controls?.refit() }, 300)
+    }
+
     fun setBubbleVisible(visible: Boolean) {
         if (visible) controls?.show() else controls?.hide()
     }

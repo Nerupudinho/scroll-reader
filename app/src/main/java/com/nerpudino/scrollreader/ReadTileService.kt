@@ -36,7 +36,7 @@ class ReadTileService : TileService() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             tile.subtitle = when {
-                service == null -> "Turn on in app"
+                service == null -> "Off: tap to turn on"
                 service.isReading -> "Reading…"
                 else -> null
             }
@@ -46,7 +46,7 @@ class ReadTileService : TileService() {
 
     @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun openSetup() {
-        val intent = Intent(this, MainActivity::class.java)
+        val intent = Intent(this, ToggleShortcutActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val pi = PendingIntent.getActivity(

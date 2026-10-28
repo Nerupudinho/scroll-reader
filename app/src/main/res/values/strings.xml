@@ -2,5 +2,7 @@
 <resources>
     <string name="app_name">Scroll Reader</string>
     <string name="tile_label">Read screen</string>
+    <string name="shortcut_toggle_short">Turn on / off</string>
+    <string name="shortcut_toggle_long">Turn Scroll Reader on or off</string>
     <string name="service_description">Reads the app on your screen aloud and keeps scrolling down until it reaches the end. It skips the status bar (time, battery, signal). Start or stop it with the floating button or the "Read screen" Quick Settings tile.</string>
 </resources>

@@ -3,6 +3,28 @@
 Every release bumps `versionName` (semver) and `versionCode` in `app/build.gradle.kts`.
 Each version is published as GitHub release `v<version>` with `ScrollReader-v<version>.apk`.
 
+## v1.6.0 (2026-10-28)
+
+### Added
+- Edge docking, like Wispr: drop the ▶ button near the left or right edge and it tucks in
+  as a slim tab. Drop it anywhere else and it floats there. While reading, the control bar
+  sits beside the docked edge. Default: tucked into the right edge.
+- "Reset button position" on the setup screen.
+- Direct shortcut to Scroll Reader's on/off switch in Accessibility settings: from the
+  setup screen, by long-pressing the app icon ("Turn on / off"), and from the Quick
+  Settings tile when the service is off.
+- Diagnostics: "Record what's on screen" logs every element an app exposes and what
+  Scroll Reader would read from it.
+
+### Fixed
+- The ▶ button could be dragged off the edge of the screen and lost (only clearing app
+  data brought it back). The controls are now always kept fully on screen, including
+  after rotation.
+- Reddit (and similar apps) not being read: long hidden labels (6+ words or 40+
+  characters) are now always read, even on elements marked as buttons; a container's
+  hidden label is used when nothing inside it is readable. Short control labels
+  ("Upvote", "Share", "Reply") are still skipped.
+
 ## v1.5.0 (2026-10-10)
 
 ### Added

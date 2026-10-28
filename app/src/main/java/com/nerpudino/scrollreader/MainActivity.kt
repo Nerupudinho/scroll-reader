@@ -37,7 +37,7 @@ class MainActivity : Activity() {
         super.onResume()
         val on = ReaderService.instance != null
         status.text = if (on) "✅  Scroll Reader is on" else "⚠️  Scroll Reader is off"
-        enableButton.text = if (on) "Open accessibility settings" else "Turn on Scroll Reader"
+        enableButton.text = if (on) "Turn Scroll Reader off" else "Turn on Scroll Reader"
     }
 
     private fun buildUi(): View {
@@ -55,11 +55,11 @@ class MainActivity : Activity() {
         col.addView(status)
 
         enableButton = Button(this).apply {
-            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            setOnClickListener { SettingsLinks.openServiceToggle(this@MainActivity) }
         }
         col.addView(enableButton)
 
-        col.addView(body("In Accessibility settings, open \"Scroll Reader\" (it may be under \"Downloaded apps\" or \"Installed apps\") and switch it on."))
+        col.addView(body("This opens Scroll Reader's on/off switch directly. Shortcut: long-press the Scroll Reader icon on your home screen → \"Turn on / off\"."))
 
         col.addView(heading("Switch greyed out?"))
         col.addView(body("Android blocks accessibility for apps installed outside the Play Store until you allow it once. Tap below, then the ⋮ menu (top right) → \"Allow restricted settings\", then try again."))
@@ -77,6 +77,16 @@ class MainActivity : Activity() {
         col.addView(body("1. Open any app.\n2. Tap the round ▶ button to read from the top of the screen, or long-press it and tap the line you want to start from.\n3. While reading, the control bar gives you:\n   ⏮ Back: restart this part, or tap again for the previous part\n   ⏯ Pause / Resume: carries on from the same word\n   ⏭ Skip: jump to the next part\n   − / + Speed: slower or faster, applies straight away\n   ■ Stop\n4. Drag the dotted handle to move the bar.\n\nOr pull down Quick Settings and tap the \"Read screen\" tile."))
 
         col.addView(heading("Settings"))
+        col.addView(Button(this).apply {
+            text = "Reset button position"
+            setOnClickListener {
+                Prefs.resetControlsPosition(this@MainActivity)
+                ReaderService.instance?.resetControlsPosition()
+                Toast.makeText(this@MainActivity, "Button moved back to the right edge", Toast.LENGTH_SHORT).show()
+            }
+        })
+        col.addView(body("Drag the ▶ button near the left or right edge and it tucks in as a slim tab. Drop it anywhere else and it floats there.").also { it.alpha = 0.7f })
+
         col.addView(Switch(this).apply {
             text = "Show floating controls"
             isChecked = Prefs.showBubble(this@MainActivity)

@@ -12,6 +12,11 @@ object Prefs {
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
     private const val KEY_VOICE_CHANNEL = "voice_channel"
     private const val KEY_SKIP_CONTROLS = "skip_controls"
+    private const val KEY_DOCK = "dock_side"
+
+    const val DOCK_NONE = "none"
+    const val DOCK_LEFT = "left"
+    const val DOCK_RIGHT = "right"
 
     const val CHANNEL_ACCESSIBILITY = "accessibility"
     const val CHANNEL_MEDIA = "media"
@@ -58,4 +63,12 @@ object Prefs {
     fun bubbleY(ctx: Context, default: Int): Int = prefs(ctx).getInt(KEY_BUBBLE_Y, default)
     fun setBubblePos(ctx: Context, x: Int, y: Int) =
         prefs(ctx).edit().putInt(KEY_BUBBLE_X, x).putInt(KEY_BUBBLE_Y, y).apply()
+
+    /** Which screen edge the ▶ button is tucked into, or none when floating. Default: right. */
+    fun dockSide(ctx: Context): String = prefs(ctx).getString(KEY_DOCK, DOCK_RIGHT) ?: DOCK_RIGHT
+    fun setDockSide(ctx: Context, side: String) = prefs(ctx).edit().putString(KEY_DOCK, side).apply()
+
+    /** Back to the default spot: tucked into the right edge, a third of the way down. */
+    fun resetControlsPosition(ctx: Context) =
+        prefs(ctx).edit().remove(KEY_BUBBLE_X).remove(KEY_BUBBLE_Y).remove(KEY_DOCK).apply()
 }

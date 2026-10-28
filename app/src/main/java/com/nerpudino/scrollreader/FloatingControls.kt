@@ -24,11 +24,16 @@ import kotlin.math.abs
 
 /**
  * Everything Scroll Reader draws on top of other apps:
- *  - Idle:    a round ▶ button. Tap = read from the top of the screen.
+ *  - Idle:    the ▶ button. Tap = read from the top of the screen.
  *             Long-press = pick the line to start from. Drag = move.
- *  - Reading: a control bar  [drag] ⏮ ⏯ ⏭  −  1.0×  +  ■
+ *             Drop it near the left/right edge and it tucks in as a slim tab
+ *             (like Wispr); drop it anywhere else and it floats there.
+ *  - Reading: a control bar  [drag] ⏮ ⏯ ⏭  −  1.0×  +  ■  (beside the docked edge)
  *  - A highlight box around the text being read.
  *  - A full-screen "tap where to start" layer while picking.
+ *
+ * Whatever happens, the controls are kept fully inside the screen, so the
+ * button can't get lost off an edge.
  */
 class FloatingControls(private val ctx: Context, private val listener: Listener) {
 
@@ -50,6 +55,11 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
         const val BG = 0xE61F4E79.toInt()
         const val HIGHLIGHT = 0xFFFFC107.toInt()
         const val HIGHLIGHT_FILL = 0x22FFC107
+
+        const val BUBBLE_DP = 54
+        const val TAB_W_DP = 26
+        const val TAB_H_DP = 64
+        const val DOCK_ZONE = 0.20f   // drop within 20% of the screen width from an edge = dock there
     }
 
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -59,31 +69,31 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
     private val params: WindowManager.LayoutParams
     private var shown = false
 
-    private val bubble: ImageView
+    /** One view for the idle button: a round bubble when floating, a slim tab when docked. */
+    private val idle: ImageView
     private val bar: LinearLayout
     private val pauseButton: ImageView
     private val speedLabel: TextView
+
+    private var dock = Prefs.dockSide(ctx)
 
     private var highlightView: View? = null
     private var highlightParams: WindowManager.LayoutParams? = null
     private var picker: View? = null
 
     init {
-        val dm = ctx.resources.displayMetrics
-
-        bubble = ImageView(ctx).apply {
+        idle = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_play)
-            val pad = dp(15)
-            setPadding(pad, pad, pad, pad)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(BG)
-            }
             contentDescription = "Start reading. Long press to choose where to start."
-            layoutParams = FrameLayout.LayoutParams(dp(54), dp(54))
+            layoutParams = FrameLayout.LayoutParams(dp(BUBBLE_DP), dp(BUBBLE_DP))
         }
-        bubble.setOnTouchListener(
-            DragTouch(onTap = { listener.onPlayTap() }, onLongPress = { listener.onPlayLongPress() })
+        idle.setOnTouchListener(
+            DragTouch(
+                onTap = { listener.onPlayTap() },
+                onLongPress = { listener.onPlayLongPress() },
+                onDragStart = { styleIdle(Prefs.DOCK_NONE) },
+                onDrop = { dropIdle() },
+            )
         )
 
         speedLabel = TextView(ctx).apply {
@@ -104,7 +114,9 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
             layoutParams = LinearLayout.LayoutParams(dp(28), dp(48))
             contentDescription = "Drag to move"
         }
-        drag.setOnTouchListener(DragTouch(onTap = null, onLongPress = null))
+        drag.setOnTouchListener(
+            DragTouch(onTap = null, onLongPress = null, onDragStart = {}, onDrop = { dropBar() })
+        )
 
         bar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -132,11 +144,9 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
             ViewGroup.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-        ).apply {
-            x = Prefs.bubbleX(ctx, dm.widthPixels - dp(62))
-            y = Prefs.bubbleY(ctx, dm.heightPixels / 3)
-        }
-        container.addView(bubble)
+        )
+        container.addView(idle)
+        loadPosition()
     }
 
     // ---------------------------------------------------------------- public
@@ -144,6 +154,7 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
     fun show() {
         if (shown) return
         try {
+            clampAndSnap()
             wm.addView(container, params)
             shown = true
         } catch (e: Exception) {
@@ -163,19 +174,35 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
         stopPicking()
     }
 
+    /** Back to the default spot (tucked into the right edge). */
+    fun resetPosition() {
+        Prefs.resetControlsPosition(ctx)
+        loadPosition()
+        relayout()
+    }
+
+    /** Screen size or rotation changed: pull the controls back inside the screen. */
+    fun refit() {
+        clampAndSnap()
+        relayout()
+    }
+
     fun showIdle() {
-        if (bubble.parent == null) {
+        if (idle.parent == null) {
             container.removeAllViews()
-            container.addView(bubble)
-            relayout()
+            container.addView(idle)
         }
+        styleIdle(dock)
+        clampAndSnap()
+        relayout()
     }
 
     fun showReading(paused: Boolean, rate: Float) {
         if (bar.parent == null) {
             container.removeAllViews()
             container.addView(bar)
-            keepOnScreen()
+            clampAndSnap()
+            relayout()
         }
         pauseButton.setImageResource(if (paused) R.drawable.ic_play else R.drawable.ic_pause)
         pauseButton.contentDescription = if (paused) "Resume" else "Pause"
@@ -183,24 +210,10 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
     }
 
     /** Keep the screen awake while the controls window is visible. */
-    fun setKeepScreenOn(on: Boolean) {
-        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        val newFlags = if (on) params.flags or flag else params.flags and flag.inv()
-        if (newFlags != params.flags) {
-            params.flags = newFlags
-            relayout()
-        }
-    }
+    fun setKeepScreenOn(on: Boolean) = setFlag(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, on)
 
     /** While a swipe gesture runs, let touches go straight through the controls. */
-    fun setPassThrough(on: Boolean) {
-        val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        val newFlags = if (on) params.flags or flag else params.flags and flag.inv()
-        if (newFlags != params.flags) {
-            params.flags = newFlags
-            relayout()
-        }
-    }
+    fun setPassThrough(on: Boolean) = setFlag(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE, on)
 
     /** Draw a box around [bounds] (screen coordinates), or remove it when null. */
     fun highlight(bounds: Rect?) {
@@ -310,7 +323,114 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
         picker = null
     }
 
+    // ---------------------------------------------------------------- position & docking
+
+    private fun loadPosition() {
+        dock = Prefs.dockSide(ctx)
+        val screen = screenSize()
+        params.x = Prefs.bubbleX(ctx, screen.x - dp(BUBBLE_DP + 8))
+        params.y = Prefs.bubbleY(ctx, screen.y / 3)
+        styleIdle(dock)
+        clampAndSnap()
+    }
+
+    /** Round bubble when floating; a slim tab with rounded inner corners when docked. */
+    private fun styleIdle(side: String) {
+        val r = dp(14).toFloat()
+        when (side) {
+            Prefs.DOCK_LEFT, Prefs.DOCK_RIGHT -> {
+                idle.layoutParams = FrameLayout.LayoutParams(dp(TAB_W_DP), dp(TAB_H_DP))
+                val p = dp(5)
+                idle.setPadding(p, p, p, p)
+                idle.background = GradientDrawable().apply {
+                    setColor(BG)
+                    // top-left, top-right, bottom-right, bottom-left (x, y pairs)
+                    cornerRadii = if (side == Prefs.DOCK_RIGHT) {
+                        floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
+                    } else {
+                        floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
+                    }
+                }
+            }
+            else -> {
+                idle.layoutParams = FrameLayout.LayoutParams(dp(BUBBLE_DP), dp(BUBBLE_DP))
+                val p = dp(15)
+                idle.setPadding(p, p, p, p)
+                idle.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(BG)
+                }
+            }
+        }
+        idle.requestLayout()
+    }
+
+    /** Idle button dropped: tuck into the nearer edge if close to it, else float there. */
+    private fun dropIdle() {
+        val screen = screenSize()
+        val size = measured()
+        val centerX = params.x + size.x / 2
+        dock = when {
+            centerX < screen.x * DOCK_ZONE -> Prefs.DOCK_LEFT
+            centerX > screen.x * (1 - DOCK_ZONE) -> Prefs.DOCK_RIGHT
+            else -> Prefs.DOCK_NONE
+        }
+        styleIdle(dock)
+        clampAndSnap()
+        relayout()
+        save()
+    }
+
+    /** Control bar dropped: keep it on screen; remember the height for the tab too. */
+    private fun dropBar() {
+        clampAndSnap()
+        relayout()
+        save()
+    }
+
+    private fun save() {
+        Prefs.setDockSide(ctx, dock)
+        Prefs.setBubblePos(ctx, params.x, params.y)
+    }
+
+    /** Keep the whole window inside the screen; stick to the docked edge if docked. */
+    private fun clampAndSnap() {
+        val screen = screenSize()
+        val size = measured()
+        val maxX = (screen.x - size.x).coerceAtLeast(0)
+        val maxY = (screen.y - size.y).coerceAtLeast(0)
+        params.x = when (dock) {
+            Prefs.DOCK_LEFT -> 0
+            Prefs.DOCK_RIGHT -> maxX
+            else -> params.x.coerceIn(0, maxX)
+        }
+        params.y = params.y.coerceIn(0, maxY)
+    }
+
+    private fun measured(): android.graphics.Point {
+        container.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        return android.graphics.Point(container.measuredWidth, container.measuredHeight)
+    }
+
+    /** Current screen size in pixels (follows rotation). */
+    private fun screenSize(): android.graphics.Point =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val b = wm.currentWindowMetrics.bounds
+            android.graphics.Point(b.width(), b.height())
+        } else {
+            val dm = ctx.resources.displayMetrics
+            android.graphics.Point(dm.widthPixels, dm.heightPixels)
+        }
+
     // ---------------------------------------------------------------- helpers
+
+    private fun setFlag(flag: Int, on: Boolean) {
+        val newFlags = if (on) params.flags or flag else params.flags and flag.inv()
+        if (newFlags != params.flags) {
+            params.flags = newFlags
+            relayout()
+        }
+    }
 
     private fun formatRate(rate: Float): String {
         val r = (rate * 100).toInt() / 100f
@@ -353,16 +473,6 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
         setOnClickListener { onClick() }
     }
 
-    /** After switching to the wider bar, nudge it back inside the screen. */
-    private fun keepOnScreen() {
-        container.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        val w = container.measuredWidth
-        val screenW = ctx.resources.displayMetrics.widthPixels
-        if (params.x + w > screenW) params.x = (screenW - w - dp(8)).coerceAtLeast(0)
-        if (params.x < 0) params.x = 0
-        relayout()
-    }
-
     private fun relayout() {
         if (!shown) return
         try {
@@ -386,6 +496,8 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
     private inner class DragTouch(
         private val onTap: (() -> Unit)?,
         private val onLongPress: (() -> Unit)?,
+        private val onDragStart: () -> Unit,
+        private val onDrop: () -> Unit,
     ) : View.OnTouchListener {
         private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
         private val longPressMs = ViewConfiguration.getLongPressTimeout().toLong()
@@ -418,24 +530,31 @@ class FloatingControls(private val ctx: Context, private val listener: Listener)
                     if (!dragging && (abs(dx) > slop || abs(dy) > slop)) {
                         dragging = true
                         main.removeCallbacks(longPressRunnable)
+                        onDragStart()
                     }
                     if (dragging) {
-                        params.x = startX + dx.toInt()
-                        params.y = startY + dy.toInt()
+                        // Follow the finger, but never past the screen edges.
+                        val screen = screenSize()
+                        val size = measured()
+                        params.x = (startX + dx.toInt()).coerceIn(0, (screen.x - size.x).coerceAtLeast(0))
+                        params.y = (startY + dy.toInt()).coerceIn(0, (screen.y - size.y).coerceAtLeast(0))
                         relayout()
                     }
                 }
                 MotionEvent.ACTION_UP -> {
                     main.removeCallbacks(longPressRunnable)
                     when {
-                        dragging -> Prefs.setBubblePos(ctx, params.x, params.y)
+                        dragging -> onDrop()
                         !longPressed -> {
                             v.performClick()
                             onTap?.invoke()
                         }
                     }
                 }
-                MotionEvent.ACTION_CANCEL -> main.removeCallbacks(longPressRunnable)
+                MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPressRunnable)
+                    if (dragging) onDrop()
+                }
             }
             return true
         }

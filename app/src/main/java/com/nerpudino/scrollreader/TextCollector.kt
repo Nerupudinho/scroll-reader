@@ -21,16 +21,20 @@ data class Line(val text: String, val bounds: Rect, val batch: Int)
  * Buttons and icons (Reply, Forward, Archive, Delete, Mark unread, Gemini...)
  * are skipped when skipControls is on. That uses what the app itself reports,
  * not a guess about the content:
- *  - anything the app marks as a button (Button, ImageButton, Material buttons,
- *    Compose buttons and HTML <button>s all report a "...Button" class), and
- *  - icons: an element with only a hidden label and no visible text, that is
- *    tappable or sits inside something tappable.
+ *  - anything the app marks as a button with a short label (Button, ImageButton,
+ *    Material/Compose buttons and HTML <button>s report a "...Button" class), and
+ *  - icons: a tappable element with only a short hidden label and no visible text.
+ * Long labels (6+ words or 40+ characters) are always read: some apps, like
+ * Reddit, mark a whole post card as a button or put its text in a hidden label.
  * Plain text, links, tappable list rows (e.g. inbox emails) and image captions
  * are still read.
  */
 object TextCollector {
 
     private const val MAX_DEPTH = 80
+
+    /** Labels this long are content (a post title, a summary), not a control's name. */
+    fun isLong(label: String): Boolean = label.length >= 40 || label.split(' ').size >= 6
 
     fun collect(
         root: AccessibilityNodeInfo,
@@ -43,6 +47,7 @@ object TextCollector {
         return out.values.toList()
     }
 
+    /** Returns how many blocks this node and its children added. */
     private fun walk(
         node: AccessibilityNodeInfo,
         out: MutableMap<String, Line>,
@@ -51,52 +56,56 @@ object TextCollector {
         skipControls: Boolean,
         parentTappable: Boolean,
         depth: Int,
-    ) {
-        if (depth > MAX_DEPTH) return
-        if (!node.isVisibleToUser) return
+    ): Int {
+        if (depth > MAX_DEPTH) return 0
+        if (!node.isVisibleToUser || node.isPassword) return 0
 
-        // A button's own label and everything inside it are skipped together.
-        if (skipControls && isButton(node)) return
-
-        val tappable = node.isClickable || node.isLongClickable
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
-
-        val skipIcons = skipControls && (tappable || parentTappable)
-        spokenTextOf(node, skipIcons)?.let { text ->
+        fun add(text: String): Int {
             val insideStatusBar = bounds.bottom <= statusBarBottom
-            if (!insideStatusBar && !bounds.isEmpty && text !in out) {
-                out[text] = Line(text, bounds, batch)
-            }
+            if (insideStatusBar || bounds.isEmpty || text in out) return 0
+            out[text] = Line(text, bounds, batch)
+            return 1
         }
+
+        val text = node.text?.toString()?.let(::clean)
+        val desc = node.contentDescription?.toString()?.let(::clean)
+
+        if (skipControls && isButton(node)) {
+            val label = text ?: desc
+            if (label != null) {
+                // Short label ("Reply", "Archive") = a real button: skip it and its insides.
+                // Long label = a whole card marked as a button (e.g. a Reddit post): read it.
+                return if (isLong(label)) add(label) else 0
+            }
+            // No label of its own: a container marked as a button. Judge what's inside.
+        }
+
+        val tappable = node.isClickable || node.isLongClickable
+        var added = 0
+        if (text != null) added += add(text)
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            walk(child, out, statusBarBottom, batch, skipControls, tappable || parentTappable, depth + 1)
+            added += walk(child, out, statusBarBottom, batch, skipControls, tappable || parentTappable, depth + 1)
         }
+
+        // Hidden label: icon names ("Archive"), image captions, or a card's whole text
+        // (Reddit puts post text here). Used only when nothing inside was readable,
+        // so a card's summary isn't read on top of its own text.
+        if (text == null && added == 0 && desc != null) {
+            val isIconLike = skipControls && (tappable || parentTappable) && !isLong(desc)
+            if (!isIconLike) added += add(desc)
+        }
+        return added
     }
 
     /** Button, ImageButton, MaterialButton, RadioButton, ToggleButton, Compose/HTML buttons... */
     private fun isButton(node: AccessibilityNodeInfo): Boolean =
         node.className?.toString()?.endsWith("Button") == true
 
-    private fun spokenTextOf(node: AccessibilityNodeInfo, skipIcons: Boolean): String? {
-        if (node.isPassword) return null
-
-        val text = node.text?.toString()?.let(::clean)
-        if (!text.isNullOrEmpty()) return text
-
-        // Content descriptions are hidden labels, usually on icons ("Archive", "Delete").
-        // Only use them on leaf nodes, so a card's summary description doesn't get read
-        // on top of the text inside it. A tappable icon is a control: skip it if asked.
-        if (node.childCount == 0 && !skipIcons) {
-            val desc = node.contentDescription?.toString()?.let(::clean)
-            if (!desc.isNullOrEmpty()) return desc
-        }
-        return null
-    }
-
-    private fun clean(raw: String): String? {
+    fun clean(raw: String): String? {
         val s = raw.replace(Regex("\\s+"), " ").trim()
         if (s.isEmpty()) return null
         // Skip pure symbols / separators like "•", "|", "›".

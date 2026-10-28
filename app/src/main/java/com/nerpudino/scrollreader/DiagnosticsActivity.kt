@@ -267,6 +267,19 @@ class DiagnosticsActivity : Activity() {
             isAllCaps = false
             setOnClickListener { log(AudioProbe.snapshot(this@DiagnosticsActivity, "MANUAL SNAPSHOT")) }
         })
+        col.addView(Button(this).apply {
+            text = "Record what's on screen (in 8 seconds)"
+            isAllCaps = false
+            setOnClickListener {
+                val service = ReaderService.instance
+                if (service == null) {
+                    toast("Turn Scroll Reader on first")
+                } else {
+                    service.recordScreenAfter(8000)
+                    toast("Switch to the app now (e.g. Reddit). Recording in 8 seconds…")
+                }
+            }
+        })
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun rowButton(label: String, onClick: () -> Unit) = Button(this).apply {
